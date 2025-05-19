@@ -87,8 +87,8 @@ void computeGradient(const Mat& src, Mat& mag, Mat& dir) {
     int rows = src.rows, cols = src.cols;
     mag = Mat::zeros(rows, cols, CV_64F);
     dir = Mat::zeros(rows, cols, CV_64F);
-    int Gx[3][3] = { {-1,0,1},{-2,0,2},{-1,0,1} };
-    int Gy[3][3] = { {-1,-2,-1},{ 0, 0, 0},{ 1, 2, 1} };
+    int Gx[3][3] = { {1,0,-1},{2,0,-2},{1,0,-1} };
+    int Gy[3][3] = { {1,2,1},{ 0, 0, 0},{-1,-2,-1} };
     for (int y = 1; y < rows - 1; y++) {
         for (int x = 1; x < cols - 1; x++) {
             double sx = 0, sy = 0;
@@ -206,6 +206,56 @@ vector<pair<double, double>> detectLines(const Mat& edges, int thresh) {
     return lines;
 }
 
+// B) Çember tespiti: manuel Hough Circle
+vector<Vec3f> detectCircles(const Mat& edges,
+    int minR, int maxR, int thresh)
+{
+    int R = edges.rows, C = edges.cols;
+    int nr = maxR - minR + 1;
+    // 3-boyutlu accumulator: [y][x][r-minR]
+    vector<vector<vector<int>>> acc(R,
+        vector<vector<int>>(C, vector<int>(nr, 0)));
+    for (int y = 0; y < R; y++) {
+        for (int x = 0; x < C; x++) {
+            if (edges.at<uchar>(y, x) == 255) {
+                for (int r = minR; r <= maxR; r++) {
+                    int ri = r - minR;
+                    for (int t = 0; t < 360; t++) {
+                        double theta = t * M_PI / 180.0;
+                        int a = cvRound(x - r * cos(theta));
+                        int b = cvRound(y - r * sin(theta));
+                        if (a >= 0 && a < C && b >= 0 && b < R)
+                            acc[b][a][ri]++;
+                    }
+                }
+            }
+        }
+    }
+    vector<Vec3f> circles;
+    for (int y = 0; y < R; y++) {
+        for (int x = 0; x < C; x++) {
+            for (int ri = 0; ri < nr; ri++) {
+                if (acc[y][x][ri] > thresh) {
+                    circles.emplace_back(
+                        float(x),
+                        float(y),
+                        float(minR + ri)
+                    );
+                }
+            }
+        }
+    }
+    return circles;
+}
+
+void drawCircles(Mat& img, const vector<Vec3f>& circles) {
+    for (auto& c : circles) {
+        Point center(cvRound(c[0]), cvRound(c[1]));
+        int radius = cvRound(c[2]);
+        circle(img, center, radius, Scalar(0, 255, 0), 2);
+    }
+}
+
 void drawLines(Mat& img, const vector<pair<double, double>>& lines) {
     for (auto& l : lines) {
         double rho = l.first, theta = l.second;
@@ -219,9 +269,17 @@ void drawLines(Mat& img, const vector<pair<double, double>>& lines) {
 
 int main() {
     // 0. Görüntüyü oku
-    Mat img = imread("D:\\Dersler\\projects\\ImageProcessingProject\\tahta.jpeg");
+    cout << "1: Line Detection\n2: Circle Detection\nSelect: ";
+    int choice; cin >> choice;
+
+    // Dosya isimlerini isterseniz buradan düzenleyin
+    string fname = (choice == 1)
+        ? "D:\\Dersler\\projects\\ImageProcessingProject\\tahta.jpeg"
+        : "D:\\Dersler\\projects\\ImageProcessingProject\\para.jpg";
+
+    Mat img = imread(fname);
     if (img.empty()) {
-        cerr << "Görüntü yüklenemedi!" << endl;
+        cerr << "Resim yüklenemedi: " << fname << endl;
         return -1;
     }
 
@@ -244,7 +302,6 @@ int main() {
     Mat dispGrad, dispNonMax;
     normalize(gradMag, dispGrad, 0, 255, NORM_MINMAX, CV_8U);
     normalize(nonMax, dispNonMax, 0, 255, NORM_MINMAX, CV_8U);
-    auto lines = detectLines(edges, /*eşik*/ 150);
 
     // Pencerelerde göster
     namedWindow("Blurred", WINDOW_AUTOSIZE); imshow("Blurred", blurred);
@@ -252,8 +309,22 @@ int main() {
     namedWindow("Non-Max Suppression", WINDOW_AUTOSIZE); imshow("Non-Max Suppression", dispNonMax);
     namedWindow("Weak Edges (128)", WINDOW_AUTOSIZE); imshow("Weak Edges (128)", weak);
     namedWindow("Final Edges", WINDOW_AUTOSIZE); imshow("Final Edges", edges);
-    drawLines(resized, lines);
-    namedWindow("Detected Lines", WINDOW_AUTOSIZE); imshow("Detected Lines", resized);
+    // Sonuçları çiz ve göster
+    if (choice == 1) {
+        auto lines = detectLines(edges, /*eşik*/ 180);
+        drawLines(resized, lines);
+        namedWindow("Detected Lines", WINDOW_AUTOSIZE);
+        imshow("Detected Lines", resized);
+    }
+    else {
+        auto circles = detectCircles(edges,
+            /*minR*/20,
+            /*maxR*/100,
+            /*eşik*/120);
+        drawCircles(resized, circles);
+        namedWindow("Detected Circles", WINDOW_AUTOSIZE);
+        imshow("Detected Circles", resized);
+    }
 
     waitKey(0);
     destroyAllWindows();
