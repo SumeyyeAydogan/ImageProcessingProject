@@ -1,18 +1,16 @@
-#define _USE_MATH_DEFINES
+ï»¿#define _USE_MATH_DEFINES
 #include <cmath>
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/highgui.hpp>
 #include <iostream>
-#include <cmath>
 #include <vector>
 #include <algorithm>
-
 
 using namespace cv;
 using namespace std;
 
-// Yeniden boyutlandýrma: En basit haliyle en yakýn komþu yöntemi kullanýlýr.
+// 1. En yakÄ±n komÅŸu ile yeniden boyutlandÄ±rma
 Mat resizeImage(const Mat& src, int newWidth, int newHeight) {
     Mat dst(newHeight, newWidth, src.type());
     double scaleX = static_cast<double>(src.cols) / newWidth;
@@ -21,213 +19,196 @@ Mat resizeImage(const Mat& src, int newWidth, int newHeight) {
         int srcY = min(static_cast<int>(y * scaleY), src.rows - 1);
         for (int x = 0; x < newWidth; x++) {
             int srcX = min(static_cast<int>(x * scaleX), src.cols - 1);
-            if (src.channels() == 3) {
+            if (src.channels() == 3)
                 dst.at<Vec3b>(y, x) = src.at<Vec3b>(srcY, srcX);
-            }
-            else {
+            else
                 dst.at<uchar>(y, x) = src.at<uchar>(srcY, srcX);
-            }
         }
     }
     return dst;
 }
 
-// BGR görüntüyü gri tonlamaya çevirir.
+// 2. BGR â†’ Gri tonlama
 Mat convertToGrayscale(const Mat& src) {
     Mat gray(src.rows, src.cols, CV_8UC1);
     for (int y = 0; y < src.rows; y++) {
         for (int x = 0; x < src.cols; x++) {
-            Vec3b color = src.at<Vec3b>(y, x);
-            // OpenCV’de renk sýrasý BGR olduðundan:
-            uchar grayVal = static_cast<uchar>(0.114 * color[0] + 0.587 * color[1] + 0.299 * color[2]);
-            gray.at<uchar>(y, x) = grayVal;
+            Vec3b c = src.at<Vec3b>(y, x);
+            gray.at<uchar>(y, x) =
+                static_cast<uchar>(0.114 * c[0] + 0.587 * c[1] + 0.299 * c[2]);
         }
     }
     return gray;
 }
 
-// Gaussian çekirdek oluþturma fonksiyonu (ksize x ksize, sigma)
+// 3. Gauss Ã§ekirdeÄŸi oluÅŸturma
 vector<vector<double>> createGaussianKernel(int ksize, double sigma) {
+    int half = ksize / 2;
     vector<vector<double>> kernel(ksize, vector<double>(ksize));
-    int halfSize = ksize / 2;
     double sum = 0.0;
-    for (int i = -halfSize; i <= halfSize; i++) {
-        for (int j = -halfSize; j <= halfSize; j++) {
-            double exponent = -(i * i + j * j) / (2 * sigma * sigma);
-            kernel[i + halfSize][j + halfSize] = exp(exponent) / (2 * M_PI * sigma * sigma);
-            sum += kernel[i + halfSize][j + halfSize];
+    for (int i = -half; i <= half; i++) {
+        for (int j = -half; j <= half; j++) {
+            double e = exp(-(i * i + j * j) / (2 * sigma * sigma))
+                / (2 * M_PI * sigma * sigma);
+            kernel[i + half][j + half] = e;
+            sum += e;
         }
     }
-    // Çekirdeði normalize et
-    for (int i = 0; i < ksize; i++) {
-        for (int j = 0; j < ksize; j++) {
+    for (int i = 0; i < ksize; i++)
+        for (int j = 0; j < ksize; j++)
             kernel[i][j] /= sum;
-        }
-    }
     return kernel;
 }
 
-// Gaussian Blur uygulamasý (gri tonlamalý görüntü üzerinde)
+// 4. Gaussian bulanÄ±klÄ±k
 Mat applyGaussianBlur(const Mat& src, int ksize, double sigma) {
     Mat dst = src.clone();
-    vector<vector<double>> kernel = createGaussianKernel(ksize, sigma);
-    int halfSize = ksize / 2;
+    auto kernel = createGaussianKernel(ksize, sigma);
+    int half = ksize / 2;
     for (int y = 0; y < src.rows; y++) {
         for (int x = 0; x < src.cols; x++) {
-            double sum = 0.0;
-            for (int i = -halfSize; i <= halfSize; i++) {
-                for (int j = -halfSize; j <= halfSize; j++) {
+            double acc = 0.0;
+            for (int i = -half; i <= half; i++) {
+                for (int j = -half; j <= half; j++) {
                     int yy = min(max(y + i, 0), src.rows - 1);
                     int xx = min(max(x + j, 0), src.cols - 1);
-                    sum += kernel[i + halfSize][j + halfSize] * src.at<uchar>(yy, xx);
+                    acc += kernel[i + half][j + half] * src.at<uchar>(yy, xx);
                 }
             }
-            dst.at<uchar>(y, x) = static_cast<uchar>(sum);
+            dst.at<uchar>(y, x) = static_cast<uchar>(acc);
         }
     }
     return dst;
 }
 
-// Basitleþtirilmiþ Canny kenar algýlama
-Mat applyCannyEdgeDetection(const Mat& src, double lowThreshold, double highThreshold) {
-    int rows = src.rows;
-    int cols = src.cols;
-    // Aþama 1: Sobel operatörleri ile gradyan hesaplama
-    Mat gradient = Mat::zeros(rows, cols, CV_64F);
-    Mat direction = Mat::zeros(rows, cols, CV_64F);
-
-    // Sobel çekirdekleri (3x3)
-    int Gx[3][3] = {
-        {-1, 0, 1},
-        {-2, 0, 2},
-        {-1, 0, 1}
-    };
-    int Gy[3][3] = {
-        {-1, -2, -1},
-        { 0,  0,  0},
-        { 1,  2,  1}
-    };
-
+// 5.1. Sobel ile gradyan & yÃ¶n hesaplama
+void computeGradient(const Mat& src, Mat& mag, Mat& dir) {
+    int rows = src.rows, cols = src.cols;
+    mag = Mat::zeros(rows, cols, CV_64F);
+    dir = Mat::zeros(rows, cols, CV_64F);
+    int Gx[3][3] = { {-1,0,1},{-2,0,2},{-1,0,1} };
+    int Gy[3][3] = { {-1,-2,-1},{ 0, 0, 0},{ 1, 2, 1} };
     for (int y = 1; y < rows - 1; y++) {
         for (int x = 1; x < cols - 1; x++) {
-            double sumX = 0.0, sumY = 0.0;
+            double sx = 0, sy = 0;
             for (int i = -1; i <= 1; i++) {
                 for (int j = -1; j <= 1; j++) {
-                    int pixel = src.at<uchar>(y + i, x + j);
-                    sumX += Gx[i + 1][j + 1] * pixel;
-                    sumY += Gy[i + 1][j + 1] * pixel;
+                    double p = src.at<uchar>(y + i, x + j);
+                    sx += Gx[i + 1][j + 1] * p;
+                    sy += Gy[i + 1][j + 1] * p;
                 }
             }
-            double mag = sqrt(sumX * sumX + sumY * sumY);
-            gradient.at<double>(y, x) = mag;
-            double angle = atan2(sumY, sumX) * 180.0 / M_PI;
-            if (angle < 0) angle += 180;
-            direction.at<double>(y, x) = angle;
+            mag.at<double>(y, x) = hypot(sx, sy);
+            double a = atan2(sy, sx) * 180.0 / M_PI;
+            if (a < 0) a += 180;
+            dir.at<double>(y, x) = a;
         }
     }
+}
 
-    // Aþama 2: Non-maximum suppression (gradyan doðrultusuna göre komþu piksellerle karþýlaþtýrma)
-    Mat nonMaxSupp = Mat::zeros(rows, cols, CV_64F);
+// 5.2. Non-maximum suppression
+void nonMaxSuppression(const Mat& mag, const Mat& dir, Mat& out) {
+    int rows = mag.rows, cols = mag.cols;
+    out = Mat::zeros(rows, cols, CV_64F);
     for (int y = 1; y < rows - 1; y++) {
         for (int x = 1; x < cols - 1; x++) {
-            double angle = direction.at<double>(y, x);
-            double mag = gradient.at<double>(y, x);
-            double q = 0.0, r = 0.0;
-            // Gradyan yönüne göre komþularý belirle
-            if ((angle >= 0 && angle < 22.5) || (angle >= 157.5 && angle <= 180)) {
-                q = gradient.at<double>(y, x + 1);
-                r = gradient.at<double>(y, x - 1);
+            double angle = dir.at<double>(y, x);
+            double m = mag.at<double>(y, x), m1, m2;
+            if ((angle < 22.5) || (angle >= 157.5)) {
+                m1 = mag.at<double>(y, x + 1);
+                m2 = mag.at<double>(y, x - 1);
             }
-            else if (angle >= 22.5 && angle < 67.5) {
-                q = gradient.at<double>(y - 1, x + 1);
-                r = gradient.at<double>(y + 1, x - 1);
+            else if (angle < 67.5) {
+                m1 = mag.at<double>(y - 1, x + 1);
+                m2 = mag.at<double>(y + 1, x - 1);
             }
-            else if (angle >= 67.5 && angle < 112.5) {
-                q = gradient.at<double>(y - 1, x);
-                r = gradient.at<double>(y + 1, x);
+            else if (angle < 112.5) {
+                m1 = mag.at<double>(y - 1, x);
+                m2 = mag.at<double>(y + 1, x);
             }
-            else if (angle >= 112.5 && angle < 157.5) {
-                q = gradient.at<double>(y - 1, x - 1);
-                r = gradient.at<double>(y + 1, x + 1);
+            else {
+                m1 = mag.at<double>(y - 1, x - 1);
+                m2 = mag.at<double>(y + 1, x + 1);
             }
-
-            if (mag >= q && mag >= r)
-                nonMaxSupp.at<double>(y, x) = mag;
-            else
-                nonMaxSupp.at<double>(y, x) = 0;
+            if (m >= m1 && m >= m2)
+                out.at<double>(y, x) = m;
         }
     }
+}
 
-    // Aþama 3: Çift eþikleme ve hysteresis ile zayýf kenarlarýn belirlenmesi
-    Mat edges = Mat::zeros(rows, cols, CV_8U);
-    for (int y = 1; y < rows - 1; y++) {
-        for (int x = 1; x < cols - 1; x++) {
-            double value = nonMaxSupp.at<double>(y, x);
-            if (value >= highThreshold) {
-                edges.at<uchar>(y, x) = 255;  // güçlü kenar
-            }
-            else if (value >= lowThreshold) {
-                edges.at<uchar>(y, x) = 128;  // zayýf kenar (ilk iþaretleme)
-            }
+// 5.3. Ã‡ift eÅŸik & Hysteresis
+void applyHysteresis(const Mat& nonMax, Mat& edges, Mat& weak, double lowT, double highT) {
+    int rows = nonMax.rows, cols = nonMax.cols;
+    edges = Mat::zeros(rows, cols, CV_8U);
+    weak = Mat::zeros(rows, cols, CV_8U);
+    // EÅŸikleme
+    for (int y = 0; y < rows; y++) {
+        for (int x = 0; x < cols; x++) {
+            double v = nonMax.at<double>(y, x);
+            if (v >= highT)       edges.at<uchar>(y, x) = 255;
+            else if (v >= lowT)   weak.at<uchar>(y, x) = 128;
         }
     }
-    // Hysteresis: Zayýf kenarlardan, güçlü kenar ile baðlantýlý olanlarý koru.
+    // Hysteresis
     bool changed;
     do {
         changed = false;
         for (int y = 1; y < rows - 1; y++) {
             for (int x = 1; x < cols - 1; x++) {
-                if (edges.at<uchar>(y, x) == 128) {
-                    bool connected = false;
-                    for (int i = -1; i <= 1 && !connected; i++) {
-                        for (int j = -1; j <= 1; j++) {
-                            if (edges.at<uchar>(y + i, x + j) == 255) {
-                                connected = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (connected) {
+                if (weak.at<uchar>(y, x) == 128) {
+                    // 8-komÅŸulukta gÃ¼Ã§lÃ¼ kenar ara
+                    bool connect = false;
+                    for (int i = -1; i <= 1 && !connect; i++)
+                        for (int j = -1; j <= 1; j++)
+                            if (edges.at<uchar>(y + i, x + j) == 255)
+                                connect = true;
+                    if (connect) {
                         edges.at<uchar>(y, x) = 255;
+                        weak.at<uchar>(y, x) = 0;
                         changed = true;
-                    }
-                    else {
-                        edges.at<uchar>(y, x) = 0;
                     }
                 }
             }
         }
     } while (changed);
-
-    return edges;
 }
 
 int main() {
-    // Sadece OpenCV kullanarak görüntüyü dosyadan oku
+    // 0. GÃ¶rÃ¼ntÃ¼yÃ¼ oku
     Mat img = imread("D:\\Dersler\\projects\\ImageProcessingProject\\satranc.jpg");
     if (img.empty()) {
-        cout << "Görüntü yüklenemedi!" << endl;
+        cerr << "GÃ¶rÃ¼ntÃ¼ yÃ¼klenemedi!" << endl;
         return -1;
     }
 
-    // 800x600 boyutlarýna yeniden boyutlandýrma (OpenCV fonksiyonu kullanýlmadan)
+    // Ã–n iÅŸlemler
     Mat resized = resizeImage(img, 800, 600);
-
-    // Gri tonlamaya çevirme (OpenCV dýþý)
     Mat gray = convertToGrayscale(resized);
+    Mat blurred = applyGaussianBlur(gray, 5, 1.5);
 
-    // Gaussian Blur uygulama (kernel: 5x5, sigma: 1.5)
-    Mat blurred = applyGaussianBlur(gray, 3, 1.0);
+    // Canny ara aÅŸamalarÄ±
+    Mat gradMag, gradDir;
+    computeGradient(blurred, gradMag, gradDir);
 
-    // Canny kenar algýlama (eþik deðerleri: 100 ve 200)
-    Mat edges = applyCannyEdgeDetection(blurred, 50, 100);
+    Mat nonMax;
+    nonMaxSuppression(gradMag, gradDir, nonMax);
 
-    // Sadece OpenCV kullanarak görüntüyü göster
-    namedWindow("Edge Detection", WINDOW_AUTOSIZE);
-    imshow("Edge Detection", edges);
+    Mat edges, weak;
+    applyHysteresis(nonMax, edges, weak, 50, 100);
+
+    // GÃ¶rselleÅŸtirme iÃ§in normalize et
+    Mat dispGrad, dispNonMax;
+    normalize(gradMag, dispGrad, 0, 255, NORM_MINMAX, CV_8U);
+    normalize(nonMax, dispNonMax, 0, 255, NORM_MINMAX, CV_8U);
+
+    // Pencerelerde gÃ¶ster
+    namedWindow("Blurred", WINDOW_AUTOSIZE); imshow("Blurred", blurred);
+    namedWindow("Gradient Magnitude", WINDOW_AUTOSIZE); imshow("Gradient Magnitude", dispGrad);
+    namedWindow("Non-Max Suppression", WINDOW_AUTOSIZE); imshow("Non-Max Suppression", dispNonMax);
+    namedWindow("Weak Edges (128)", WINDOW_AUTOSIZE); imshow("Weak Edges (128)", weak);
+    namedWindow("Final Edges", WINDOW_AUTOSIZE); imshow("Final Edges", edges);
 
     waitKey(0);
     destroyAllWindows();
-
     return 0;
 }
