@@ -249,11 +249,72 @@ vector<Vec3f> detectCircles(const Mat& edges,
 }
 
 void drawCircles(Mat& img, const vector<Vec3f>& circles) {
-    for (auto& c : circles) {
+    // Tüm çemberleri tek bir görüntüde göster
+    Mat imgCircles = img.clone();
+
+    // Tespit edilen çemberleri boyutlarına göre renklendir
+    for (size_t i = 0; i < circles.size(); i++) {
+        Vec3i c = circles[i];
+        Point center(c[0], c[1]);
+        int radius = c[2];
+
+        // Boyuta göre renk belirle
+        Scalar color;
+        if (radius <= 30) {
+            color = Scalar(255, 0, 0);  // Küçük çemberler: Mavi
+        }
+        else if (radius <= 60) {
+            color = Scalar(0, 255, 0);  // Orta çemberler: Yeşil
+        }
+        else {
+            color = Scalar(0, 0, 255);  // Büyük çemberler: Kırmızı
+        }
+
+        // Çemberi çiz
+        circle(imgCircles, center, 3, color, -1, LINE_AA);
+        circle(imgCircles, center, radius, color, 2, LINE_AA);
+    }
+
+    // Sonuç pencerelerini göster
+    imshow("Orijinal Görüntü", img);
+    //imshow("Kenarlar (Canny + Dilation)", dilatedEdges);
+    imshow("Detected Circles Manual", imgCircles);
+    /*for (auto& c : circles) {
         Point center(cvRound(c[0]), cvRound(c[1]));
         int radius = cvRound(c[2]);
         circle(img, center, radius, Scalar(0, 255, 0), 2);
+    }*/
+}
+void drawCirclesWithOpencv(Mat& img, const vector<Vec3f>& circles) {
+    // Tüm çemberleri tek bir görüntüde göster
+    Mat imgCircles = img.clone();
+
+    // Tespit edilen çemberleri boyutlarına göre renklendir
+    for (size_t i = 0; i < circles.size(); i++) {
+        Vec3i c = circles[i];
+        Point center(c[0], c[1]);
+        int radius = c[2];
+
+        // Boyuta göre renk belirle
+        Scalar color;
+        if (radius <= 30) {
+            color = Scalar(255, 0, 0);  // Küçük çemberler: Mavi
+        }
+        else if (radius <= 60) {
+            color = Scalar(0, 255, 0);  // Orta çemberler: Yeşil
+        }
+        else {
+            color = Scalar(0, 0, 255);  // Büyük çemberler: Kırmızı
+        }
+
+        // Çemberi çiz
+        circle(imgCircles, center, 3, color, -1, LINE_AA);
+        circle(imgCircles, center, radius, color, 2, LINE_AA);
     }
+
+    // Sonuç pencerelerini göster
+    //imshow("Kenarlar (Canny + Dilation)", dilatedEdges);
+    imshow("Detected Circles with OpenCv", imgCircles);
 }
 
 void drawLines(Mat& img, const vector<pair<double, double>>& lines) {
@@ -275,7 +336,7 @@ int main() {
     // Dosya isimlerini isterseniz buradan düzenleyin
     string fname = (choice == 1)
         ? "D:\\Dersler\\projects\\ImageProcessingProject\\tahta.jpeg"
-        : "D:\\Dersler\\projects\\ImageProcessingProject\\para.jpg";
+        : "D:\\Dersler\\projects\\ImageProcessingProject\\paralar.jpeg";
 
     Mat img = imread(fname);
     if (img.empty()) {
@@ -318,12 +379,14 @@ int main() {
     }
     else {
         auto circles = detectCircles(edges,
-            /*minR*/20,
+            /*minR*/25,
             /*maxR*/100,
             /*eşik*/120);
         drawCircles(resized, circles);
-        namedWindow("Detected Circles", WINDOW_AUTOSIZE);
-        imshow("Detected Circles", resized);
+        vector<Vec3f> allCircles;
+        HoughCircles(blurred, allCircles, HOUGH_GRADIENT, 1, blurred.rows / 4, 150, 40, 5, 100);
+
+        drawCirclesWithOpencv(resized, allCircles);
     }
 
     waitKey(0);
